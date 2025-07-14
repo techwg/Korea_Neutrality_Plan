@@ -1,5 +1,14 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
+// api/gemini.ts
 import { GoogleGenAI } from '@google/genai';
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  const { cityName, question, context } = req.body;
+  if (!cityName || !question) {
+    return res.status(400).json({ error: 'cityName and question are required' });
+  }
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const model = 'gemini-2.5-flash';
