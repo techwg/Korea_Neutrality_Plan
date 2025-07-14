@@ -9,11 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "18.3.1",
-    "react-dom/client": "18.3.1",
+    "react": "18.2.0",
+    // "react-dom/client": "18.3.1", <-- 이 줄을 삭제합니다.
     "@google/genai": "^1.9.0",
     "recharts": "^2.12.7",
-    "react-dom": "18.3.1"
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
