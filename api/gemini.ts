@@ -1,29 +1,65 @@
-// api/gemini.ts
-import { GoogleGenAI } from '@google/genai';
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  const { cityName, question, context } = req.body;
-  if (!cityName || !question) {
-    return res.status(400).json({ error: 'cityName and question are required' });
-  }
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { reportData } from '../constants.ts';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-const model = 'gemini-2.5-flash';
+const apiKey = process.env.API_KEY;
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  const { cityName, question, context } = req.body;
-  if (!cityName || !question) {
-    return res.status(400).json({ error: 'cityName and question are required' });
-  }
+if (!apiKey) {
+  throw new Error("The API_KEY environment variable is not set.");
+}
 
-  // context는 선택적으로 받음
-  const prompt = `
+const ai = new GoogleGenAI({ apiKey });
+
+const allowCors = (fn: (req: VercelRequest, res: VercelResponse) => Promise<any>) => async (req: VercelRequest, res: VercelResponse) => {
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS')
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    )
+    if (req.method === 'OPTIONS') {
+        res.status(200).end()
+        return
+    }
+    return await fn(req, res)
+}
+
+async function handler(req: VercelRequest, res: VercelResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    try {
+        const { action, cityName, question } = req.body;
+
+        if (!action || !cityName) {
+            return res.status(400).json({ error: 'Missing required parameters: action, cityName' });
+        }
+
+        const cityData = reportData[cityName];
+        if (!cityData) {
+            return res.status(404).json({ error: `City '${cityName}' not found.` });
+        }
+
+        let prompt;
+
+        if (action === 'chat') {
+            if (!question) {
+                return res.status(400).json({ error: 'Missing required parameter: question' });
+            }
+            const context = `
+              - 비전: ${cityData.vision}
+              - 2018년 배출량: ${cityData.emissions.toLocaleString()} 천톤CO₂eq
+              - 2030년 감축 목표율: ${cityData.rate}%
+              - 2030년 감축 목표량: ${cityData.reduction.toLocaleString()} 천톤CO₂eq
+              - 부문별 배출 비중: ${JSON.stringify(cityData.sectors)}
+              - 10년간 재정 투자 계획: 총 ${cityData.finance.total.toLocaleString()}억원 (자체 예산: ${cityData.finance.city.toLocaleString()}억원, 외부 재원: ${cityData.finance.external.toLocaleString()}억원)
+              - 도시 유형: ${cityData.type}
+            `;
+
+            prompt = `
 # 페르소나
 당신은 전라남도 '${cityName}'의 탄소중립 계획을 깊이 있게 이해하고, 핵심을 꿰뚫어 설명하는 최고 수준의 정책 분석 전문가입니다. 당신의 답변은 항상 친절하고, 명확하며, 사용자가 추가 질문을 할 필요가 없을 정도로 상세해야 합니다.
 
@@ -41,20 +77,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 # ${cityName} 보고서 발췌 내용
 ---
-${context || ''}
+${context}
 ---
 
 # 최종 산출물
 위 규칙에 따라 생성된, 전문가의 상세하고 친절한 답변:
 `;
+        } else if (action === 'plan') {
+            const context = `
+              - 도시명: ${cityName}
+              - 도시 유형: ${cityData.type}
+              - 주요 배출 부문: ${Object.keys(cityData.sectors).sort((a,b) => cityData.sectors[b] - cityData.sectors[a]).join(', ')}
+              - 탄소중립 비전: "${cityData.vision}"
+            `;
 
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt
-    });
-    res.status(200).json({ result: response.text });
-  } catch (error) {
-    res.status(500).json({ error: 'AI 응답 생성 중 오류가 발생했습니다.' });
-  }
-} 
+            prompt = `
+# 페르소나
+당신은 지역 커뮤니티 전문가이자 재단 소속 환경 전문가입니다. 당신의 목표는 '${cityName}' 시민들이 일상 생활에서 탄소 중립을 실천할 수 있도록, 쉽고 구체적이며, 해당 지역의 특성을 완벽하게 반영한 '시민 실천 방안'을 제안하는 것입니다.
+
+# 핵심 지시
+주어진 '${cityName}의 핵심 정보'를 바탕으로, 해당 도시의 특성(예: ${cityData.type})에 맞는 시민 실천 방안을 다음 3가지 카테고리로 나누어 제안하세요. 각 카테고리별로 2-3개의 구체적인 행동을 제시해야 합니다.
+
+1.  **🏡 가정에서 바로 시작하기:** 에너지 절약, 올바른 분리배출, 현명한 소비 등 집에서 할 수 있는 구체적인 행동.
+2.  **🌳 우리 동네와 함께하기:** 지역 사회 활동, 대중교통 이용, 로컬푸드 소비 등 공동체와 함께 할 수 있는 행동.
+3.  **📢 목소리 내기:** 지역의 탄소중립 정책에 대한 관심, 관련 캠페인 참여, 좋은 아이디어 제안 등 시민으로서 영향력을 발휘할 수 있는 행동.
+
+# ${cityName}의 핵심 정보
+---
+${context}
+---
+
+# 최종 산출물
+위 규칙에 따라 생성된, '${cityName}' 시민들을 위한 맞춤형 실천 방안 (반드시 Markdown 목록 형태로 명료하게 정리):
+`;
+        } else {
+            return res.status(400).json({ error: `Invalid action: ${action}` });
+        }
+        
+        const response: GenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt
+        });
+        
+        return res.status(200).json({ text: response.text });
+
+    } catch (error) {
+        console.error("API Error:", error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return res.status(500).json({ error: 'AI response generation failed.', details: message });
+    }
+}
+
+export default allowCors(handler);
