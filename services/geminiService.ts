@@ -2,7 +2,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { reportData } from '../constants.ts';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
 
 const model = 'gemini-2.5-flash';
 
